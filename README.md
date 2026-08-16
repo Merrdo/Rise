@@ -1,3 +1,6 @@
+
+https://merrdo.github.io/Rise/
+
 # Günlük Planlayıcı — PWA
 
 Derleme (build) aracı gerekmeyen, doğrudan GitHub Pages'te çalışan statik bir PWA.

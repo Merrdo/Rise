@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Günlük Planlayıcı</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0A0D11; overscroll-behavior: none; }
+  #root { height: 100vh; height: 100dvh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- window.storage polyfill: localStorage tabanlı basit kalıcı depolama -->
+<script>
+(function () {
+  function storageKey(key, shared) {
+    return (shared ? "gp-shared:" : "gp-local:") + key;
+  }
+  window.storage = {
+    async get(key, shared) {
+      try {
+        const raw = localStorage.getItem(storageKey(key, !!shared));
+        if (raw === null) return null;
+        return { key, value: raw, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async set(key, value, shared) {
+      try {
+        localStorage.setItem(storageKey(key, !!shared), value);
+        return { key, value, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async delete(key, shared) {
+      try {
+        localStorage.removeItem(storageKey(key, !!shared));
+        return { key, deleted: true, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+    async list(prefix, shared) {
+      try {
+        const p = storageKey(prefix || "", !!shared);
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf(p) === 0) keys.push(k.slice((shared ? "gp-shared:" : "gp-local:").length));
+        }
+        return { keys, prefix, shared: !!shared };
+      } catch (e) {
+        return null;
+      }
+    },
+  };
+})();
+</script>
+
+<!-- React 18 + ReactDOM (UMD) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel Standalone: derleyip JSX'i tarayıcıda çalıştırır -->
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useLayoutEffect, useMemo } = React;
+
+// ---- İkonlar: harici lucide-react paketine bağımlı kalmamak için (CDN erişimi
+// olmayan ortamlarda / GitHub Pages gibi statik barındırmalarda güvenilir çalışsın diye)
+// kullanılan ikonlar Lucide'ın kendi path verileriyle birebir, yerel SVG bileşenleri
+// olarak tanımlandı. Görsel çıktı orijinaliyle aynıdır.
+function makeIcon(paths) {
+  return function Icon({ size = 24, color = "currentColor", strokeWidth = 2, style, className, fill = "none" }) {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill={fill}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={style}
+        className={className}
+      >
+        {paths}
+      </svg>
+    );
+  };
+}
+
+const Menu = makeIcon(<><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="18" x2="20" y2="18" /></>);
+const Pencil = makeIcon(<><path d="M21.174 6.812a1 1 0 0 0-3.986-3.986L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /><path d="m15 5 4 4" /></>);
+const Plus = makeIcon(<><path d="M5 12h14" /><path d="M12 5v14" /></>);
+const Minus = makeIcon(<path d="M5 12h14" />);
+const Check = makeIcon(<path d="M20 6 9 17l-5-5" />);
+const ChevronRight = makeIcon(<path d="m9 18 6-6-6-6" />);
+const ArrowLeft = makeIcon(<><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></>);
+const RotateCcw = makeIcon(<><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></>);
+const HeartPulse = makeIcon(<><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" /><path d="M3.22 8.5h1.44a2 2 0 0 1 1.79 1.11l.83 1.67a2 2 0 0 0 3.6-.05L13.5 3.5l2.2 5.5a2 2 0 0 0 1.79 1.11h1.44" /></>);
+const Dumbbell = makeIcon(<><path d="M14.4 14.4 9.6 9.6" /><path d="M18.657 21.485a2 2 0 1 1-2.829-2.828l-1.767 1.768a2 2 0 1 1-2.829-2.829l6.364-6.364a2 2 0 1 1 2.829 2.829l-1.768 1.767a2 2 0 1 1 2.828 2.829z" /><path d="m21.5 21.5-1.4-1.4" /><path d="M3.9 3.9 2.5 2.5" /><path d="M6.404 12.768a2 2 0 1 1-2.829-2.829l1.768-1.767a2 2 0 1 1-2.828-2.829l2.828-2.828a2 2 0 1 1 2.829 2.828l1.767-1.768a2 2 0 1 1 2.829 2.829z" /></>);
+const Apple = makeIcon(<><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z" /><path d="M10 2c1 .5 2 2 2 5" /></>);
+const Pill = makeIcon(<><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z" /><path d="m8.5 8.5 7 7" /></>);
+const ListChecks = makeIcon(<><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></>);
+const Play = makeIcon(<polygon points="6 3 20 12 6 21 6 3" />);
+const Pause = makeIcon(<><rect x="14" y="4" width="4" height="16" rx="1" /><rect x="6" y="4" width="4" height="16" rx="1" /></>);
+const SkipForward = makeIcon(<><polygon points="5 4 15 12 5 20 5 4" /><line x1="19" y1="5" x2="19" y2="19" /></>);
+const X = makeIcon(<><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>);
+const CheckCircle2 = makeIcon(<><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></>);
+const Repeat2 = makeIcon(<><path d="m2 9 3-3 3 3" /><path d="M13 18H7a2 2 0 0 1-2-2V6" /><path d="m22 15-3 3-3-3" /><path d="M11 6h6a2 2 0 0 1 2 2v10" /></>);
+const TimerIcon = makeIcon(<><line x1="10" y1="2" x2="14" y2="2" /><line x1="12" y1="14" x2="15" y2="11" /><circle cx="12" cy="14" r="8" /></>);
+const ImagePlus = makeIcon(<><path d="M16 5h6" /><path d="M19 2v6" /><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9.5" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></>);
+const Sparkles = makeIcon(<><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4" /><path d="M22 5h-4" /><path d="M4 17v2" /><path d="M5 18H3" /></>);
+
+
+const CATS = [
+  { key: "spor", label: "Spor", accent: "#FF9F0A", Icon: Dumbbell, placeholder: "Yeni hareket" },
+  { key: "beslenme", label: "Beslenme", accent: "#32D74B", Icon: Apple, placeholder: "Yeni besin" },
+  { key: "ilaclar", label: "İlaçlar", accent: "#64D2FF", Icon: Pill, placeholder: "Yeni ilaç" },
+  { key: "genel", label: "Genel", accent: "#DA8FFF", Icon: ListChecks, placeholder: "Yeni görev" },
+];
+const CATMAP = Object.fromEntries(CATS.map((c) => [c.key, c]));
+
+const DEFAULT_LISTS = {
+  beslenme: [
+    { id: "b1", text: "Bol su iç (en az 2 litre)" },
+    { id: "b2", text: "Bir porsiyon sebze/meyve" },
+  ],
+  ilaclar: [{ id: "i1", text: "Sabah ilacı — kahvaltıdan sonra" }],
+  genel: [{ id: "g1", text: "Günün planını gözden geçir" }],
+};
+
+// Spor artık düz bir liste değil, "seans" (Sabah / Akşam / kullanıcı tanımlı) yapısında.
+// Her hareket süreli (mode:"time", saniye) ya da set/tekrar tabanlı (mode:"reps", serbest metin) olabilir,
+// ve her hareketin kendine ait, sonrasında uygulanacak bir dinlenme süresi (restSeconds) vardır.
+const DEFAULT_SPOR_SESSIONS = [
+  {
+    id: "ses-sabah",
+    name: "Sabah Seansı",
+    exercises: [
+      { id: "ex-sb1", text: "Jumping jack", mode: "time", seconds: 40, restSeconds: 15 },
+      { id: "ex-sb2", text: "Şınav", mode: "reps", repsLabel: "3 set x 12 tekrar", restSeconds: 30 },
+      { id: "ex-sb3", text: "Plank", mode: "time", seconds: 45, restSeconds: 0 },
+    ],
+  },
+  {
+    id: "ses-aksam",
+    name: "Akşam Seansı",
+    exercises: [
+      { id: "ex-ak1", text: "Tempolu yürüyüş", mode: "time", seconds: 600, restSeconds: 0 },
+      { id: "ex-ak2", text: "Esneme hareketleri", mode: "reps", repsLabel: "5 hareket x 30 sn", restSeconds: 0 },
+    ],
+  },
+];
+
+const INK = "#F4F2ED", INK_DIM = "rgba(244,242,237,0.62)", INK_FAINT = "rgba(244,242,237,0.36)";
+const SURFACE = "#12161B", HAIR = "rgba(244,242,237,0.1)", BG = "#0A0D11";
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function ringDots(count, radius, center) {
+  return Array.from({ length: count }).map((_, i) => {
+    const a = (i / count) * Math.PI * 2;
+    return { x: center + radius * Math.cos(a), y: center + radius * Math.sin(a) };
+  });
+}
+function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;-moz-user-select:none;user-select:none;-webkit-touch-callout:none;}
+html,body{touch-action:pan-y;-ms-touch-action:pan-y;}
+.gp-root{touch-action:pan-y;}
+input, textarea{-webkit-user-select:text;-moz-user-select:text;user-select:text;}
+.gp-btn{font-family:inherit;}
+#gp-splash{position:absolute;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;background:#081016;overflow:hidden;transition:opacity .7s ease, transform .7s ease;}
+#gp-splash.hide{opacity:0;transform:scale(1.05);pointer-events:none;}
+.aurora-blob{position:absolute;border-radius:50%;filter:blur(60px);opacity:.55;mix-blend-mode:screen;}
+.aurora-blob.b1{width:340px;height:340px;background:#1e5f6b;top:-80px;left:-60px;animation:drift1 14s ease-in-out infinite;}
+.aurora-blob.b2{width:300px;height:300px;background:#2f7d5e;bottom:-40px;right:-60px;animation:drift2 16s ease-in-out infinite;}
+.aurora-blob.b3{width:260px;height:260px;background:#365e8a;top:30%;left:20%;animation:drift3 18s ease-in-out infinite;}
+@keyframes drift1{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,60px)}}
+@keyframes drift2{0%,100%{transform:translate(0,0)}50%{transform:translate(-50px,-30px)}}
+@keyframes drift3{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-50px)}}
+@keyframes riseIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes spin2{from{transform:rotate(0)}to{transform:rotate(-360deg)}}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:.28}50%{transform:scale(1.12);opacity:.5}}
+@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes modalFadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalSlideUp{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+@keyframes jiggle{from{transform:rotate(-.6deg)}to{transform:rotate(.6deg)}}
+@keyframes popIn{from{transform:scale(0)}to{transform:scale(1)}}
+.gp-row{animation:rowIn .3s ease both;}
+.gp-row.jiggle{animation:jiggle .26s ease-in-out infinite alternate, rowIn .3s ease both;}
+.gp-badge:active .gp-circ, .gp-navbtn:active, .gp-icon-btn:active, #gp-cta:active, #gp-insight:active, .qa-item:active .qa-circ, #gp-addbtn:active{transform:scale(.94);}
+.gp-root{height:100vh;height:100dvh;position:relative;overflow:hidden;}
+.gp-heroscroll{-ms-overflow-style:none;scrollbar-width:none;}
+.gp-heroscroll::-webkit-scrollbar{display:none;}
+#gp-draft::placeholder{color:${INK_FAINT};}
+::selection{background:rgba(244,242,237,0.25);}
+@keyframes playerIn{0%{opacity:0;transform:translateY(26px) scale(.96)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes playerOut{0%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(18px) scale(.96)}}
+@keyframes phaseIn{0%{opacity:0;transform:translateY(14px) scale(.97)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes ppPop{0%{transform:scale(.7)}55%{transform:scale(1.1)}100%{transform:scale(1)}}
+@keyframes dotGlow{0%,100%{opacity:1}50%{opacity:.6}}
+@keyframes ringPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+.gp-player-panel{animation:playerIn .45s cubic-bezier(.22,1,.36,1) both;}
+.gp-player-panel.closing{animation:playerOut .32s cubic-bezier(.4,0,1,1) both;}
+.gp-phase-content{animation:phaseIn .4s cubic-bezier(.22,1,.36,1) both;}
+.gp-playpause-icon{animation:ppPop .3s cubic-bezier(.34,1.56,.64,1) both;}
+.gp-progress-dot{transition:background-color .35s ease;}
+.gp-progress-dot.current{animation:dotGlow 1.8s ease-in-out infinite;}
+.gp-playpause-btn{transition:transform .18s cubic-bezier(.34,1.56,.64,1), background .25s;}
+.gp-playpause-btn:active{transform:scale(.9);}
+.gp-timer-ring{transition:opacity .4s ease;}
+.gp-timer-ring.running{animation:ringPulse 2s ease-in-out infinite;}
+
+@keyframes pageIn{0%{opacity:0;transform:translateX(34px) scale(.99)}100%{opacity:1;transform:translateX(0) scale(1)}}
+.gp-page{animation:pageIn .38s cubic-bezier(.22,1,.36,1) both;}
+.gp-page-hero{position:relative;flex-shrink:0;overflow:hidden;}
+.gp-page-pill{position:relative;transition:background .25s,border-color .25s,color .25s,transform .15s;}
+.gp-page-pill:active{transform:scale(.96);}
+.gp-page-card{transition:border-color .25s, transform .15s, box-shadow .25s;}
+.gp-page-card:active{transform:scale(.99);}
+.gp-composer{transition:border-color .2s, background .2s;}
+.gp-composer:focus-within{border-color:rgba(244,242,237,0.3);background:rgba(244,242,237,0.06);}
+
+.gp-navmenu{position:absolute;inset:0;z-index:90;max-width:440px;margin:0 auto;background:linear-gradient(180deg, rgba(10,13,17,.97), rgba(8,11,15,.99));backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);opacity:0;visibility:hidden;transition:opacity .42s cubic-bezier(.22,1,.36,1), visibility .42s;display:flex;align-items:center;justify-content:center;}
+.gp-navmenu.open{opacity:1;visibility:visible;}
+.gp-navmenu-eyebrow{opacity:0;transform:translateY(10px);transition:opacity .5s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1);transition-delay:.06s;}
+.gp-navmenu.open .gp-navmenu-eyebrow{opacity:1;transform:translateY(0);}
+.gp-navmenu-item{opacity:0;transform:translateY(10px);transition:opacity .5s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1);}
+.gp-navmenu.open .gp-navmenu-item{opacity:1;transform:translateY(0);}
+.gp-navmenu-item:nth-child(1){transition-delay:.10s;}
+.gp-navmenu-item:nth-child(2){transition-delay:.16s;}
+.gp-navmenu-item:nth-child(3){transition-delay:.22s;}
+.gp-navmenu-item:nth-child(4){transition-delay:.28s;}
+.gp-navmenu-item:active{transform:scale(.98) !important;}
+.gp-navmenu-foot{opacity:0;transform:translateY(10px);transition:opacity .5s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1);transition-delay:.34s;}
+.gp-navmenu.open .gp-navmenu-foot{opacity:1;transform:translateY(0);}
+`;
+
+function GunlukPlanlayiciReact() {
+  const [active, setActive] = useState("spor");
+  const [lists, setLists] = useState(DEFAULT_LISTS);
+  const [completions, setCompletions] = useState({});
+  const [editMode, setEditMode] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [insightOpen, setInsightOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [listsOpen, setListsOpen] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [splashHide, setSplashHide] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [statusFade, setStatusFade] = useState(false);
+  const [dispDone, setDispDone] = useState(0);
+
+  // spor: seans yapısı + oynatıcı (player) durumu
+  const [sporSessions, setSporSessions] = useState(DEFAULT_SPOR_SESSIONS);
+  const [player, setPlayer] = useState(null); // { sessionId, index, phase: 'exercise'|'rest'|'done', secondsLeft, running }
+  const [displayPlayer, setDisplayPlayer] = useState(null); // player'ın kapanış animasyonu boyunca ekranda kalan kopyası
+  const [playerClosing, setPlayerClosing] = useState(false);
+  const playerCloseTimeoutRef = useRef(null);
+  const [newSessionName, setNewSessionName] = useState("");
+  const [exDraftFor, setExDraftFor] = useState(null); // sessionId whose "hareket ekle" formu açık
+  const [exText, setExText] = useState("");
+  const [exMode, setExMode] = useState("time"); // "time" | "reps"
+  const [exSeconds, setExSeconds] = useState(30);
+  const [exReps, setExReps] = useState("");
+  const [exRest, setExRest] = useState(0);
+  const [exMediaUrl, setExMediaUrl] = useState(null);
+  const [exMediaType, setExMediaType] = useState(null); // "image" | "video"
+  const mediaInputRef = useRef(null);
+
+  // cihaz boyutuna göre orantılı ölçekleme: tasarım 440px genişlik baz alınarak yapıldı;
+  // büyük ekranlarda (tablet, masaüstü) bu referans genişliği büyütüp ortalıyoruz ki
+  // arayüz küçük kalmasın, oranlar bozulmadan büyüsün.
+  const BASE_W = 440, BASE_H = 900;
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    function computeScale() {
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const s = Math.min(vw / BASE_W, vh / BASE_H, 1.9);
+      setScale(Math.max(s, 1));
+    }
+    computeScale();
+    window.addEventListener("resize", computeScale);
+    window.addEventListener("orientationchange", computeScale);
+    return () => {
+      window.removeEventListener("resize", computeScale);
+      window.removeEventListener("orientationchange", computeScale);
+    };
+  }, []);
+
+  const dateKey = useRef(todayKey()).current;
+  const inputRef = useRef(null);
+  const navBarRef = useRef(null);
+  const navBtnRefs = useRef({});
+  const rafRef = useRef(null);
+
+  const cat = CATMAP[active];
+  function catItems(key) {
+    if (key === "spor") return sporSessions.flatMap((s) => s.exercises);
+    return lists[key] || [];
+  }
+  const items = catItems(active);
+  const dayMap = completions[dateKey] || {};
+  const doneCount = items.filter((it) => dayMap[it.id]).length;
+  const totalCount = items.length;
+  const remaining = totalCount - doneCount;
+  const pct = totalCount ? doneCount / totalCount : 0;
+
+  const totalAll = CATS.reduce((s, c) => s + catItems(c.key).length, 0);
+  const doneAll = CATS.reduce((s, c) => s + catItems(c.key).filter((it) => dayMap[it.id]).length, 0);
+
+  const outerDots = useMemo(() => ringDots(16, 95, 110), []);
+  const innerDots = useMemo(() => ringDots(10, 60, 110), []);
+
+  // load persisted data
+  useEffect(() => {
+    (async () => {
+      try {
+        let l = null, c = null, sp = null;
+        try { l = await window.storage.get("planner-lists-v2", false); } catch (e) {}
+        try { c = await window.storage.get("planner-completions-v2", false); } catch (e) {}
+        try { sp = await window.storage.get("planner-spor-sessions-v1", false); } catch (e) {}
+        if (l && l.value) setLists(JSON.parse(l.value));
+        if (c && c.value) setCompletions(JSON.parse(c.value));
+        if (sp && sp.value) setSporSessions(JSON.parse(sp.value));
+      } catch (e) {}
+      setReady(true);
+    })();
+  }, []);
+
+  // splash: yalnızca "Başla" butonuna basılınca kapanır, otomatik geçiş yok  // yakınlaştırmayı (pinch-zoom / çift dokunma zoom / ctrl+wheel zoom) engelle
+  useEffect(() => {
+    function preventGesture(e) { e.preventDefault(); }
+    function preventMultiTouch(e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }
+    let lastTouchEnd = 0;
+    function preventDoubleTapZoom(e) {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 300) e.preventDefault();
+      lastTouchEnd = now;
+    }
+    function preventWheelZoom(e) { if (e.ctrlKey) e.preventDefault(); }
+    document.addEventListener("gesturestart", preventGesture, { passive: false });
+    document.addEventListener("gesturechange", preventGesture, { passive: false });
+    document.addEventListener("touchmove", preventMultiTouch, { passive: false });
+    document.addEventListener("touchend", preventDoubleTapZoom, { passive: false });
+    document.addEventListener("wheel", preventWheelZoom, { passive: false });
+    return () => {
+      document.removeEventListener("gesturestart", preventGesture);
+      document.removeEventListener("gesturechange", preventGesture);
+      document.removeEventListener("touchmove", preventMultiTouch);
+      document.removeEventListener("touchend", preventDoubleTapZoom);
+      document.removeEventListener("wheel", preventWheelZoom);
+    };
+  }, []);
+
+  // number count-up animation
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
+    const from = dispDone, to = doneCount, dur = 450, start = performance.now();
+    function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      setDispDone(Math.round(from + (to - from) * p));
+      if (p < 1) rafRef.current = requestAnimationFrame(step);
+    }
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doneCount, active]);
+
+  // status line fade on change
+  const statusKey = totalCount === 0 ? "empty" : remaining === 0 ? "done" : "remaining-" + remaining;
+  const prevStatusKey = useRef(statusKey);
+  useEffect(() => {
+    if (prevStatusKey.current !== statusKey) {
+      setStatusFade(true);
+      const t = setTimeout(() => { setStatusFade(false); prevStatusKey.current = statusKey; }, 160);
+      return () => clearTimeout(t);
+    }
+  }, [statusKey]);
+
+  // sliding nav highlight
+  const [hiStyle, setHiStyle] = useState({ width: 0, x: 0 });
+  useLayoutEffect(() => {
+    const btn = navBtnRefs.current[active];
+    const bar = navBarRef.current;
+    if (btn && bar) {
+      const br = btn.getBoundingClientRect(), pr = bar.getBoundingClientRect();
+      setHiStyle({ width: br.width, x: br.left - pr.left - 10 });
+    }
+  }, [active, ready]);
+  useEffect(() => {
+    function onResize() {
+      const btn = navBtnRefs.current[active];
+      const bar = navBarRef.current;
+      if (btn && bar) {
+        const br = btn.getBoundingClientRect(), pr = bar.getBoundingClientRect();
+        setHiStyle({ width: br.width, x: br.left - pr.left - 10 });
+      }
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [active]);
+
+  async function persistLists(next) {
+    setLists(next);
+    try { await window.storage.set("planner-lists-v2", JSON.stringify(next), false); } catch (e) {}
+  }
+  async function persistCompletions(next) {
+    setCompletions(next);
+    try { await window.storage.set("planner-completions-v2", JSON.stringify(next), false); } catch (e) {}
+  }
+  async function persistSporSessions(next) {
+    setSporSessions(next);
+    try { await window.storage.set("planner-spor-sessions-v1", JSON.stringify(next), false); } catch (e) {}
+  }
+  function toggleItem(id) {
+    if (editMode) return;
+    const dm = { ...dayMap, [id]: !dayMap[id] };
+    persistCompletions({ ...completions, [dateKey]: dm });
+  }
+  function addItem() {
+    const text = draft.trim();
+    if (!text) return;
+    const id = active[0] + Date.now();
+    persistLists({ ...lists, [active]: [...items, { id, text }] });
+    setDraft("");
+  }
+  function removeItem(id) {
+    persistLists({ ...lists, [active]: items.filter((it) => it.id !== id) });
+    const dm = { ...dayMap }; delete dm[id];
+    persistCompletions({ ...completions, [dateKey]: dm });
+  }
+  function resetToday() {
+    persistCompletions({ ...completions, [dateKey]: {} });
+  }
+  function openLists(focusInput) {
+    setListsOpen(true);
+    if (focusInput) setTimeout(() => inputRef.current?.focus(), 380);
+  }
+
+  // ---- Spor: seans & hareket yönetimi ----
+  function addSession() {
+    const name = newSessionName.trim();
+    if (!name) return;
+    const session = { id: "ses" + Date.now(), name, exercises: [] };
+    persistSporSessions([...sporSessions, session]);
+    setNewSessionName("");
+  }
+  function removeSession(id) {
+    persistSporSessions(sporSessions.filter((s) => s.id !== id));
+    if (player && player.sessionId === id) setPlayer(null);
+  }
+  function openExerciseForm(sessionId) {
+    setExDraftFor(sessionId);
+    setExText(""); setExMode("time"); setExSeconds(30); setExReps(""); setExRest(0);
+    setExMediaUrl(null); setExMediaType(null);
+  }
+  function handleMediaFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith("video/");
+    const reader = new FileReader();
+    reader.onload = () => {
+      setExMediaUrl(reader.result);
+      setExMediaType(isVideo ? "video" : "image");
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+  function addExercise(sessionId) {
+    const text = exText.trim();
+    if (!text) return;
+    const ex = {
+      id: "ex" + Date.now(),
+      text,
+      mode: exMode,
+      seconds: exMode === "time" ? Math.max(1, Number(exSeconds) || 30) : undefined,
+      repsLabel: exMode === "reps" ? (exReps.trim() || "1 set") : undefined,
+      restSeconds: Math.max(0, Number(exRest) || 0),
+      mediaUrl: exMediaUrl || undefined,
+      mediaType: exMediaUrl ? exMediaType : undefined,
+    };
+    persistSporSessions(sporSessions.map((s) => (s.id === sessionId ? { ...s, exercises: [...s.exercises, ex] } : s)));
+    setExDraftFor(null);
+    setExMediaUrl(null); setExMediaType(null);
+  }
+  function removeExercise(sessionId, exId) {
+    persistSporSessions(sporSessions.map((s) => (s.id === sessionId ? { ...s, exercises: s.exercises.filter((e) => e.id !== exId) } : s)));
+    const dm = { ...dayMap }; delete dm[exId];
+    persistCompletions({ ...completions, [dateKey]: dm });
+  }
+
+  // ---- Spor: tam ekran oynatıcı ----
+  function startSession(sessionId) {
+    const session = sporSessions.find((s) => s.id === sessionId);
+    if (!session || session.exercises.length === 0) return;
+    const ex = session.exercises[0];
+    setPlayer(
+      ex.mode === "time"
+        ? { sessionId, index: 0, phase: "exercise", secondsLeft: ex.seconds, running: true }
+        : { sessionId, index: 0, phase: "exercise", secondsLeft: null, running: false }
+    );
+  }
+  function advanceExercise() {
+    setPlayer((p) => {
+      if (!p) return p;
+      const session = sporSessions.find((s) => s.id === p.sessionId);
+      const nextIndex = p.index + 1;
+      if (!session || nextIndex >= session.exercises.length) {
+        return { ...p, phase: "done", secondsLeft: null, running: false };
+      }
+      const nextEx = session.exercises[nextIndex];
+      return nextEx.mode === "time"
+        ? { sessionId: p.sessionId, index: nextIndex, phase: "exercise", secondsLeft: nextEx.seconds, running: true }
+        : { sessionId: p.sessionId, index: nextIndex, phase: "exercise", secondsLeft: null, running: false };
+    });
+  }
+  function completeCurrentExercise() {
+    if (!player) return;
+    const session = sporSessions.find((s) => s.id === player.sessionId);
+    const ex = session?.exercises[player.index];
+    if (ex) persistCompletions({ ...completions, [dateKey]: { ...dayMap, [ex.id]: true } });
+    if (ex && ex.restSeconds > 0) {
+      setPlayer((p) => (p ? { ...p, phase: "rest", secondsLeft: ex.restSeconds, running: true } : p));
+    } else {
+      advanceExercise();
+    }
+  }
+  function skipCurrent() {
+    if (!player) return;
+    advanceExercise();
+  }
+  function togglePause() {
+    setPlayer((p) => (p ? { ...p, running: !p.running } : p));
+  }
+  function closePlayer() {
+    setPlayer(null);
+  }
+
+  // oynatıcı panelinin akıcı açılış/kapanış geçişi: kapanırken içerik hemen sıfırlanmaz,
+  // "closing" animasyonu bitene kadar ekranda tutulur.
+  useEffect(() => {
+    if (player) {
+      clearTimeout(playerCloseTimeoutRef.current);
+      setPlayerClosing(false);
+      setDisplayPlayer(player);
+    } else if (displayPlayer) {
+      setPlayerClosing(true);
+      playerCloseTimeoutRef.current = setTimeout(() => {
+        setDisplayPlayer(null);
+        setPlayerClosing(false);
+      }, 320);
+    }
+    return () => clearTimeout(playerCloseTimeoutRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player]);
+
+  // saniye sayacı: her saniye tik atar
+  useEffect(() => {
+    if (!player || !player.running || player.secondsLeft == null) return;
+    const t = setTimeout(() => {
+      setPlayer((p) => (p && p.secondsLeft != null ? { ...p, secondsLeft: p.secondsLeft - 1 } : p));
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [player]);
+
+  // süre bittiğinde faz geçişi
+  useEffect(() => {
+    if (!player || player.secondsLeft !== 0) return;
+    if (player.phase === "exercise") completeCurrentExercise();
+    else if (player.phase === "rest") advanceExercise();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player?.secondsLeft, player?.phase, player?.sessionId, player?.index]);
+
+  const R = 118, CX = 160, CY = 150;
+  const arcLen = Math.PI * R;
+  const dashOffset = arcLen - Math.min(pct, 1) * arcLen;
+  const ang = Math.PI - Math.min(pct, 1) * Math.PI;
+  const ex = CX + R * Math.cos(ang), ey = CY - R * Math.sin(ang);
+  const statusText = totalCount === 0 ? "Henüz madde yok" : remaining === 0 ? "Hedefe ulaşıldı" : `${remaining} madde kaldı`;
+
+  return (
+    <div className="gp-root" style={{ background: BG, fontFamily: "'Inter',-apple-system,sans-serif", color: INK, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <style>{CSS}</style>
+      <div
+        className="gp-frame"
+        style={{
+          width: BASE_W,
+          height: BASE_H,
+          maxHeight: "100dvh",
+          position: "relative",
+          overflow: "hidden",
+          transform: `scale(${scale})`,
+          transformOrigin: "center center",
+        }}
+      >
+
+      {/* SPLASH */}
+      <div id="gp-splash" className={splashHide ? "hide" : ""}>
+        <div className="aurora-blob b1" /><div className="aurora-blob b2" /><div className="aurora-blob b3" />
+        <div style={{ position: "relative", zIndex: 2, animation: "riseIn 1s ease .1s both" }}>
+          <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 300, fontSize: 44, margin: "0 0 14px", lineHeight: 1.1 }}>Bugüne hoş geldin</div>
+          <div style={{ fontSize: 15, color: INK_DIM, maxWidth: 280, margin: "0 auto 30px", lineHeight: 1.5 }}>
+            Spor, beslenme, ilaç ve genel görevlerini tek yerden takip et. Her gün sıfırdan başlar.
+          </div>
+          <button className="gp-btn" onClick={() => setSplashHide(true)} style={{ padding: "13px 30px", borderRadius: 26, border: "1px solid rgba(244,242,237,0.35)", background: "rgba(244,242,237,0.08)", color: INK, fontSize: 14.5, fontWeight: 600, cursor: "pointer", backdropFilter: "blur(8px)" }}>
+            Başla
+          </button>
+        </div>
+      </div>
+
+      <div className="gp-heroscroll" style={{ width: "100%", maxWidth: 440, position: "relative", height: "100%", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+        {/* HERO */}
+        <div style={{ position: "relative", padding: "calc(20px + env(safe-area-inset-top)) 20px 28px", overflow: "hidden" }}>
+          <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+            <div style={{ position: "absolute", width: 280, height: 280, borderRadius: "50%", filter: "blur(70px)", opacity: 0.45, mixBlendMode: "screen", background: "#13343d", top: -100, left: -40, animation: "drift1 20s ease-in-out infinite" }} />
+            <div style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", filter: "blur(70px)", opacity: 0.45, mixBlendMode: "screen", background: "#1b3a2c", bottom: -60, right: -40, animation: "drift2 22s ease-in-out infinite" }} />
+            <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at 50% 30%, ${cat.accent} 0%, transparent 60%)`, opacity: 0.16, transition: "background .3s" }} />
+            <div style={{ position: "absolute", inset: 0, background: `linear-gradient(to bottom, transparent 0%, rgba(10,13,17,0.7) 70%, ${BG} 100%)` }} />
+          </div>
+
+          <div style={{ position: "relative", zIndex: 1, paddingBottom: 108 }}>
+            {/* nav */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <button className="gp-icon-btn" onClick={() => setNavMenuOpen(true)} aria-label="Menü" style={{ background: "transparent", border: "none", color: INK, cursor: "pointer", padding: 4 }}>
+                <Menu size={22} strokeWidth={1.8} />
+              </button>
+              <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 3 }}>PLANLA</div>
+              <button
+                className="gp-icon-btn"
+                onClick={() => setEditMode((v) => !v)}
+                aria-label="Düzenle"
+                style={{ width: 34, height: 34, borderRadius: 17, border: "1px solid rgba(244,242,237,0.3)", background: editMode ? INK : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+              >
+                <Pencil size={15} strokeWidth={1.8} color={editMode ? BG : INK} />
+              </button>
+            </div>
+
+            {/* badges */}
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "26px 2px 4px" }}>
+              {CATS.map((c) => {
+                const Icon = c.Icon;
+                const n = catItems(c.key).length;
+                const d = catItems(c.key).filter((it) => dayMap[it.id]).length;
+                const isActive = c.key === active;
+                return (
+                  <button key={c.key} className="gp-badge" onClick={() => setActive(c.key)} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 74 }}>
+                    <div className="gp-circ" style={{ width: 58, height: 58, borderRadius: 29, background: "rgba(244,242,237,0.08)", backdropFilter: "blur(6px)", border: isActive ? `1.5px solid ${c.accent}` : "1px solid rgba(244,242,237,0.16)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "border-color .25s, transform .15s" }}>
+                      <Icon size={16} strokeWidth={1.7} color={isActive ? c.accent : INK} />
+                      <span style={{ fontSize: 12, fontWeight: 600, color: isActive ? c.accent : INK, fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0" }}>{d}/{n}</span>
+                    </div>
+                    <span style={{ fontSize: 10.5, fontWeight: 500, color: isActive ? INK : INK_DIM }}>{c.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* breathing rings */}
+            <div style={{ position: "relative", width: 220, height: 220, margin: "6px auto -190px", pointerEvents: "none" }}>
+              <div style={{ position: "absolute", inset: 0, animation: "spin 26s linear infinite, breathe 4.5s ease-in-out infinite" }}>
+                {outerDots.map((p, i) => (
+                  <div key={i} style={{ position: "absolute", width: 4, height: 4, borderRadius: "50%", background: cat.accent, opacity: 0.35, left: p.x, top: p.y, transition: "background .3s" }} />
+                ))}
+              </div>
+              <div style={{ position: "absolute", inset: 0, animation: "spin2 18s linear infinite reverse, breathe 4.5s ease-in-out infinite .3s" }}>
+                {innerDots.map((p, i) => (
+                  <div key={i} style={{ position: "absolute", width: 4, height: 4, borderRadius: "50%", background: cat.accent, opacity: 0.35, left: p.x, top: p.y, transition: "background .3s" }} />
+                ))}
+              </div>
+            </div>
+
+            {/* arc gauge */}
+            <div style={{ position: "relative", marginTop: 18 }}>
+              <svg viewBox="0 0 320 168" style={{ display: "block", width: "100%", overflow: "visible" }}>
+                <path d={`M 42 ${CY} A ${R} ${R} 0 0 1 278 ${CY}`} fill="none" stroke="rgba(244,242,237,0.2)" strokeWidth="10" strokeLinecap="round" />
+                <path
+                  d={`M 42 ${CY} A ${R} ${R} 0 0 1 278 ${CY}`}
+                  fill="none" stroke={cat.accent} strokeWidth="10" strokeLinecap="round"
+                  strokeDasharray={arcLen} strokeDashoffset={dashOffset}
+                  style={{ transition: "stroke-dashoffset .7s cubic-bezier(.4,0,.2,1), stroke .3s" }}
+                />
+                <circle cx="60" cy="112" r="2" fill="rgba(244,242,237,0.4)" />
+                <circle cx="160" cy="34" r="2" fill="rgba(244,242,237,0.4)" />
+                <circle cx="260" cy="112" r="2" fill="rgba(244,242,237,0.4)" />
+                <circle cx={ex} cy={ey} r="6" fill={cat.accent} style={{ animation: "pulseDot 2.2s ease-in-out infinite", transition: "fill .3s" }} />
+                <text x="30" y={CY + 22} fill={INK_FAINT} fontSize="11" fontFamily="'Inter',sans-serif" fontWeight="600" style={{ fontVariantNumeric: "tabular-nums" }}>0</text>
+                <text x="260" y={CY + 22} fill={INK_FAINT} fontSize="11" fontFamily="'Inter',sans-serif" fontWeight="600" style={{ fontVariantNumeric: "tabular-nums" }}>{totalCount}</text>
+              </svg>
+              <div style={{ position: "absolute", left: "50%", top: 64, transform: "translateX(-50%)" }}>
+                <cat.Icon size={22} strokeWidth={1.6} color={cat.accent} />
+              </div>
+            </div>
+
+            {/* stat text */}
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: 2, color: INK_DIM, textTransform: "uppercase" }}>{cat.label} İlerlemesi</div>
+              <div style={{ fontFamily: "'Inter',sans-serif", fontWeight: 300, fontSize: 58, lineHeight: 1.05, margin: "6px 0 2px", fontVariantNumeric: "tabular-nums" }}>{dispDone}/{totalCount}</div>
+              <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontWeight: 400, fontSize: 27, marginBottom: 8, minHeight: 34, opacity: statusFade ? 0 : 1, transform: statusFade ? "translateY(4px)" : "translateY(0)", transition: "opacity .3s, transform .3s" }}>
+                {statusText}
+              </div>
+              <div style={{ fontSize: 13.5, color: INK_DIM, marginBottom: 18 }}>
+                {remaining === 0 && totalCount > 0 ? `Bugünkü ${cat.label.toLowerCase()} listeni tamamladın` : `Bugünkü ${cat.label.toLowerCase()} listeni tamamla`}
+              </div>
+              <button id="gp-cta" onClick={() => openLists(false)} style={{ padding: "12px 26px", borderRadius: 24, border: "1px solid rgba(244,242,237,0.25)", background: "rgba(244,242,237,0.14)", backdropFilter: "blur(6px)", color: INK, fontSize: 14.5, fontWeight: 600, cursor: "pointer", transition: "transform .12s" }}>
+                Listeyi gör
+              </button>
+            </div>
+
+            {/* insight card */}
+            <button id="gp-insight" onClick={() => setInsightOpen(true)} style={{ width: "100%", marginTop: 24, display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 16, border: "1px solid rgba(244,242,237,0.14)", background: "rgba(20,24,28,0.55)", backdropFilter: "blur(10px)", cursor: "pointer" }}>
+              <div style={{ width: 40, height: 40, borderRadius: 20, background: "rgba(244,242,237,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <HeartPulse size={18} strokeWidth={1.7} color={cat.accent} />
+              </div>
+              <div style={{ flex: 1, textAlign: "left" }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600 }}>Genel Durum</div>
+                <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, color: cat.accent, textTransform: "uppercase", transition: "color .3s" }}><span style={{ fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0" }}>{doneAll}/{totalAll}</span> TAMAMLANDI</div>
+              </div>
+              <ChevronRight size={18} color={INK_DIM} />
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      {/* GENEL DURUM — pop-up modal */}
+      {insightOpen && (
+        <div
+          onClick={() => setInsightOpen(false)}
+          style={{ position: "absolute", inset: 0, zIndex: 80, maxWidth: 440, margin: "0 auto", background: "rgba(6,8,10,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center", animation: "modalFadeIn .25s ease both" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxHeight: "80%", overflowY: "auto", background: SURFACE, borderTop: `1px solid ${HAIR}`, borderRadius: "24px 24px 0 0", padding: "14px 22px calc(26px + env(safe-area-inset-bottom))", animation: "modalSlideUp .32s cubic-bezier(.22,1,.36,1) both" }}
+          >
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(244,242,237,0.22)", margin: "0 auto 18px" }} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 38, height: 38, borderRadius: 19, background: "rgba(244,242,237,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <HeartPulse size={17} strokeWidth={1.7} color={cat.accent} />
+                </div>
+                <div>
+                  <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 400, fontSize: 19 }}>Genel Durum</div>
+                  <div style={{ fontSize: 11.5, color: INK_DIM }}>Bugünün özeti</div>
+                </div>
+              </div>
+              <button onClick={() => setInsightOpen(false)} aria-label="Kapat" style={{ width: 32, height: 32, borderRadius: 16, border: "1px solid rgba(244,242,237,0.2)", background: "transparent", color: INK, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <X size={15} />
+              </button>
+            </div>
+
+            <div style={{ textAlign: "center", padding: "22px 0 18px" }}>
+              <div style={{ fontFamily: "'Inter',sans-serif", fontWeight: 300, fontSize: 46, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{doneAll}/{totalAll}</div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: 2, color: INK_DIM, textTransform: "uppercase", marginTop: 6 }}>Tüm Kategoriler Tamamlandı</div>
+            </div>
+
+            <div style={{ padding: "4px 0 8px" }}>
+              {CATS.map((c) => {
+                const Icon = c.Icon;
+                const d = catItems(c.key).filter((it) => dayMap[it.id]).length;
+                const t = catItems(c.key).length;
+                const p = t ? (d / t) * 100 : 0;
+                return (
+                  <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: `1px solid ${HAIR}` }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 16, background: `${c.accent}1e`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Icon size={15} color={c.accent} />
+                    </div>
+                    <span style={{ fontSize: 13.5, width: 84, flexShrink: 0, fontWeight: 500 }}>{c.label}</span>
+                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(244,242,237,0.12)", overflow: "hidden" }}>
+                      <div style={{ height: "100%", borderRadius: 3, width: `${p}%`, background: c.accent, transition: "width .5s ease" }} />
+                    </div>
+                    <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0", color: INK_DIM, width: 36, textAlign: "right", flexShrink: 0 }}>{d}/{t}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ÇİZELGELER — kendi tam ekran sayfası (spor seansları / diğer kategori listeleri) */}
+      {listsOpen && (
+        <div className="gp-page" style={{ position: "absolute", inset: 0, zIndex: 41, maxWidth: 440, margin: "0 auto", background: BG, display: "flex", flexDirection: "column" }}>
+          <div className="gp-page-hero">
+            <div style={{ position: "absolute", inset: 0, zIndex: 0, background: `radial-gradient(circle at 50% -10%, ${cat.accent} 0%, transparent 58%)`, opacity: 0.2, transition: "background .3s" }} />
+            <div style={{ position: "relative", zIndex: 1, padding: "calc(18px + env(safe-area-inset-top)) 20px 0" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <button onClick={() => setListsOpen(false)} aria-label="Geri" style={{ width: 36, height: 36, borderRadius: 18, border: "1px solid rgba(244,242,237,0.22)", background: "rgba(244,242,237,0.06)", backdropFilter: "blur(6px)", color: INK, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <ArrowLeft size={17} strokeWidth={1.8} />
+                </button>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 2.5, color: INK_DIM, textTransform: "uppercase" }}>{cat.label}</div>
+                <button
+                  onClick={() => setEditMode((v) => !v)}
+                  aria-label="Düzenle"
+                  style={{ width: 36, height: 36, borderRadius: 18, border: "1px solid rgba(244,242,237,0.22)", background: editMode ? INK : "rgba(244,242,237,0.06)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "background .2s" }}
+                >
+                  <Pencil size={15} strokeWidth={1.8} color={editMode ? BG : INK} />
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "20px 0 22px" }}>
+                <div style={{ width: 54, height: 54, borderRadius: 27, background: `${cat.accent}1e`, border: `1px solid ${cat.accent}44`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+                  <cat.Icon size={23} strokeWidth={1.6} color={cat.accent} />
+                </div>
+                <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 400, fontSize: 25 }}>{cat.label} listesi</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginTop: 6 }}>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0", fontSize: 13.5, color: cat.accent, fontWeight: 600 }}>{doneCount}/{totalCount}</span>
+                  <span style={{ fontSize: 12.5, color: INK_DIM }}>tamamlandı</span>
+                </div>
+                <div style={{ width: "100%", maxWidth: 220, height: 5, borderRadius: 3, background: "rgba(244,242,237,0.1)", marginTop: 14, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${pct * 100}%`, background: cat.accent, borderRadius: 3, transition: "width .5s cubic-bezier(.4,0,.2,1)" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, paddingBottom: 16 }}>
+                {CATS.map((c) => {
+                  const Icon = c.Icon;
+                  const isActive = c.key === active;
+                  return (
+                    <button key={c.key} className="gp-page-pill" onClick={() => setActive(c.key)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "10px 2px", borderRadius: 14, border: `1px solid ${isActive ? c.accent + "55" : "rgba(244,242,237,0.1)"}`, background: isActive ? `${c.accent}1a` : "rgba(244,242,237,0.03)", cursor: "pointer" }}>
+                      <Icon size={16} strokeWidth={1.8} color={isActive ? c.accent : INK_DIM} />
+                      <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? c.accent : INK_DIM }}>{c.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ padding: "16px 18px 28px", overflowY: "auto", flex: 1 }}>
+
+          {!ready ? (
+            <div style={{ color: INK_DIM, fontSize: 14 }}>Yükleniyor…</div>
+          ) : active === "spor" ? (
+            <>
+              {sporSessions.length === 0 && (
+                <div style={{ color: INK_FAINT, fontSize: 14, padding: "10px 2px" }}>Henüz seans yok. Aşağıdan bir seans ekleyin.</div>
+              )}
+              {sporSessions.map((session) => {
+                const exs = session.exercises;
+                const d = exs.filter((e) => dayMap[e.id]).length;
+                const t = exs.length;
+                return (
+                  <div key={session.id} className="gp-page-card" style={{ marginBottom: 14, padding: "16px 16px 12px", borderRadius: 18, background: "rgba(244,242,237,0.035)", border: `1px solid ${HAIR}`, boxShadow: "0 8px 24px rgba(0,0,0,0.18)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600 }}>{session.name}</div>
+                        <div style={{ fontSize: 12, color: INK_DIM, marginTop: 2 }}><span style={{ fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0" }}>{d}/{t}</span> tamamlandı</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                        {editMode ? (
+                          <button onClick={() => removeSession(session.id)} aria-label="Seansı sil" style={{ width: 26, height: 26, borderRadius: 13, border: "none", background: "#FF453A", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                            <Minus size={14} strokeWidth={3} />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => startSession(session.id)}
+                            disabled={t === 0}
+                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20, border: "none", background: t === 0 ? "rgba(244,242,237,0.12)" : cat.accent, color: t === 0 ? INK_FAINT : BG, fontSize: 13, fontWeight: 700, cursor: t === 0 ? "default" : "pointer" }}
+                          >
+                            <Play size={13} fill={t === 0 ? "none" : BG} /> Başlat
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 10 }}>
+                      {exs.map((ex, i) => {
+                        const checked = !!dayMap[ex.id];
+                        return (
+                          <div key={ex.id} className={"gp-row" + (editMode ? " jiggle" : "")} style={{ animationDelay: `${i * 0.03}s`, display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: i < exs.length - 1 ? `1px solid ${HAIR}` : "none" }}>
+                            {editMode && (
+                              <button onClick={() => removeExercise(session.id, ex.id)} aria-label="Hareketi sil" style={{ width: 20, height: 20, borderRadius: 10, border: "none", background: "#FF453A", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                                <Minus size={11} strokeWidth={3} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => toggleItem(ex.id)}
+                              disabled={editMode}
+                              style={{ width: 22, height: 22, borderRadius: 11, flexShrink: 0, border: `1.5px solid ${checked ? cat.accent : "rgba(244,242,237,0.3)"}`, background: checked ? cat.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: editMode ? "default" : "pointer" }}
+                            >
+                              {checked && <Check size={12} color={BG} strokeWidth={3} />}
+                            </button>
+                            {ex.mediaUrl && (
+                              ex.mediaType === "video" ? (
+                                <video src={ex.mediaUrl} muted loop playsInline style={{ width: 36, height: 36, borderRadius: 9, objectFit: "cover", flexShrink: 0, background: "rgba(244,242,237,0.06)" }} />
+                              ) : (
+                                <img src={ex.mediaUrl} alt="" style={{ width: 36, height: 36, borderRadius: 9, objectFit: "cover", flexShrink: 0 }} />
+                              )
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14.5, color: checked ? INK_DIM : INK, textDecoration: checked ? "line-through" : "none" }}>{ex.text}</div>
+                              <div style={{ fontSize: 11, color: INK_FAINT, display: "flex", alignItems: "center", gap: 5, marginTop: 1 }}>
+                                {ex.mode === "time" ? <TimerIcon size={10} /> : <Repeat2 size={10} />}
+                                {ex.mode === "time" ? formatDuration(ex.seconds) : ex.repsLabel}
+                                {ex.restSeconds > 0 ? ` · ${ex.restSeconds}sn dinlenme` : ""}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {editMode && exDraftFor !== session.id && (
+                        <button onClick={() => openExerciseForm(session.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 2px 2px", border: "none", background: "transparent", color: cat.accent, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                          <Plus size={14} /> Hareket ekle
+                        </button>
+                      )}
+
+                      {editMode && exDraftFor === session.id && (
+                        <div style={{ marginTop: 10, padding: "14px 12px", borderRadius: 14, background: "rgba(244,242,237,0.05)", border: `1px solid ${HAIR}` }}>
+                          <input
+                            autoFocus
+                            value={exText}
+                            onChange={(e) => setExText(e.target.value)}
+                            placeholder="Hareket adı (örn. Squat)"
+                            style={{ width: "100%", border: "none", outline: "none", background: "transparent", borderBottom: `1px solid ${HAIR}`, padding: "4px 0 8px", fontSize: 14.5, color: INK, fontFamily: "inherit", marginBottom: 10 }}
+                          />
+                          <input ref={mediaInputRef} type="file" accept="image/*,video/*" onChange={handleMediaFile} style={{ display: "none" }} />
+                          {exMediaUrl ? (
+                            <div style={{ position: "relative", marginBottom: 10 }}>
+                              {exMediaType === "video" ? (
+                                <video src={exMediaUrl} muted loop playsInline autoPlay style={{ width: "100%", maxHeight: 150, borderRadius: 12, objectFit: "cover", display: "block", background: "#000" }} />
+                              ) : (
+                                <img src={exMediaUrl} alt="" style={{ width: "100%", maxHeight: 150, borderRadius: 12, objectFit: "cover", display: "block" }} />
+                              )}
+                              <button
+                                onClick={() => { setExMediaUrl(null); setExMediaType(null); }}
+                                aria-label="Medyayı kaldır"
+                                style={{ position: "absolute", top: 6, right: 6, width: 26, height: 26, borderRadius: 13, border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => mediaInputRef.current?.click()}
+                              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px 12px", borderRadius: 12, border: `1px dashed ${HAIR}`, background: "transparent", color: INK_DIM, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}
+                            >
+                              <ImagePlus size={15} /> Görsel veya video ekle
+                            </button>
+                          )}
+                          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                            <button onClick={() => setExMode("time")} style={{ flex: 1, padding: "7px 0", borderRadius: 10, border: `1px solid ${exMode === "time" ? cat.accent : HAIR}`, background: exMode === "time" ? `${cat.accent}22` : "transparent", color: exMode === "time" ? cat.accent : INK_DIM, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Süreli</button>
+                            <button onClick={() => setExMode("reps")} style={{ flex: 1, padding: "7px 0", borderRadius: 10, border: `1px solid ${exMode === "reps" ? cat.accent : HAIR}`, background: exMode === "reps" ? `${cat.accent}22` : "transparent", color: exMode === "reps" ? cat.accent : INK_DIM, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Set/Tekrar</button>
+                          </div>
+                          {exMode === "time" ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                              <span style={{ fontSize: 12.5, color: INK_DIM, width: 70, flexShrink: 0 }}>Süre (sn)</span>
+                              <input type="number" min={1} value={exSeconds} onChange={(e) => setExSeconds(e.target.value)} style={{ flex: 1, border: "none", outline: "none", background: "transparent", borderBottom: `1px solid ${HAIR}`, padding: "4px 0", fontSize: 14, color: INK, fontFamily: "inherit" }} />
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                              <span style={{ fontSize: 12.5, color: INK_DIM, width: 70, flexShrink: 0 }}>Set/Tekrar</span>
+                              <input value={exReps} onChange={(e) => setExReps(e.target.value)} placeholder="örn. 3 set x 12 tekrar" style={{ flex: 1, border: "none", outline: "none", background: "transparent", borderBottom: `1px solid ${HAIR}`, padding: "4px 0", fontSize: 14, color: INK, fontFamily: "inherit" }} />
+                            </div>
+                          )}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                            <span style={{ fontSize: 12.5, color: INK_DIM, width: 70, flexShrink: 0 }}>Dinlenme (sn)</span>
+                            <input type="number" min={0} value={exRest} onChange={(e) => setExRest(e.target.value)} style={{ flex: 1, border: "none", outline: "none", background: "transparent", borderBottom: `1px solid ${HAIR}`, padding: "4px 0", fontSize: 14, color: INK, fontFamily: "inherit" }} />
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setExDraftFor(null)} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: `1px solid ${HAIR}`, background: "transparent", color: INK_DIM, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Vazgeç</button>
+                            <button onClick={() => addExercise(session.id)} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "none", background: cat.accent, color: BG, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Ekle</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {editMode && (
+                <div className="gp-composer" style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", marginTop: 4, borderRadius: 16, border: `1px dashed ${HAIR}`, background: "rgba(244,242,237,0.02)" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 13, flexShrink: 0, background: cat.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Plus size={14} color={BG} strokeWidth={3} />
+                  </div>
+                  <input
+                    value={newSessionName}
+                    onChange={(e) => setNewSessionName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addSession()}
+                    onBlur={addSession}
+                    placeholder="Yeni seans adı (örn. Öğlen Seansı)"
+                    style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 15, color: INK, fontFamily: "inherit" }}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {items.length === 0 && <div style={{ color: INK_FAINT, fontSize: 14, padding: "10px 2px" }}>Bu bölüm boş.</div>}
+              {items.map((it, i) => {
+                const checked = !!dayMap[it.id];
+                return (
+                  <div key={it.id} className={"gp-row" + (editMode ? " jiggle" : "")} style={{ animationDelay: `${i * 0.03}s`, display: "flex", alignItems: "center", gap: 12, padding: "12px 2px", borderBottom: i < items.length - 1 ? `1px solid ${HAIR}` : "none" }}>
+                    {editMode && (
+                      <button onClick={() => removeItem(it.id)} aria-label="Sil" style={{ width: 22, height: 22, borderRadius: 11, border: "none", background: "#FF453A", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, animation: "popIn .2s ease" }}>
+                        <Minus size={13} strokeWidth={3} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => toggleItem(it.id)}
+                      disabled={editMode}
+                      style={{ width: 24, height: 24, borderRadius: 12, flexShrink: 0, border: `1.5px solid ${checked ? cat.accent : "rgba(244,242,237,0.3)"}`, background: checked ? cat.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: editMode ? "default" : "pointer", transform: checked ? "scale(1.08)" : "scale(1)", transition: "transform .18s, background .2s, border-color .2s" }}
+                    >
+                      {checked && <Check size={14} color={BG} strokeWidth={3} />}
+                    </button>
+                    <span style={{ flex: 1, fontSize: 15.5, color: checked ? INK_DIM : INK, textDecoration: checked ? "line-through" : "none", transition: "color .2s" }}>{it.text}</span>
+                  </div>
+                );
+              })}
+
+              <div className="gp-composer" style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", marginTop: 12, borderRadius: 16, border: `1px dashed ${HAIR}`, background: "rgba(244,242,237,0.02)" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 13, flexShrink: 0, background: cat.accent, display: "flex", alignItems: "center", justifyContent: "center", transition: "background .3s" }}>
+                  <Plus size={14} color={BG} strokeWidth={3} />
+                </div>
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={addItem}
+                  onKeyDown={(e) => e.key === "Enter" && inputRef.current.blur()}
+                  placeholder={cat.placeholder}
+                  id="gp-draft"
+                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 15, color: INK, fontFamily: "inherit" }}
+                />
+              </div>
+            </>
+          )}
+          </div>
+        </div>
+      )}
+
+      {/* MENÜ — tam ekran kategori menüsü (html tasarımıyla aynı stil) */}
+      <div className={"gp-navmenu" + (navMenuOpen ? " open" : "")} aria-hidden={!navMenuOpen}>
+        <div style={{ width: "100%", padding: "0 28px" }}>
+          <p className="gp-navmenu-eyebrow" style={{ color: INK_DIM, fontSize: 13, letterSpacing: "0.14em", textTransform: "uppercase", margin: "0 0 18px" }}>Menü</p>
+          <div>
+            {CATS.map((c) => {
+              const Icon = c.Icon;
+              const n = catItems(c.key).length;
+              const d = catItems(c.key).filter((it) => dayMap[it.id]).length;
+              return (
+                <button
+                  key={c.key}
+                  className="gp-navmenu-item"
+                  onClick={() => { setNavMenuOpen(false); setEditMode(false); setActive(c.key); setTimeout(() => setListsOpen(true), 260); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "inherit", fontSize: 26, fontWeight: 500, color: INK, padding: "16px 2px", background: "transparent", border: 0, borderBottom: `1px solid ${HAIR}`, cursor: "pointer", textAlign: "left", transition: "transform .15s" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <Icon size={19} strokeWidth={1.8} color={c.accent} />
+                    {c.label}
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 13, color: INK_DIM, fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0" }}>{d}/{n}</span>
+                    <span style={{ color: INK_DIM, fontSize: 20 }}>›</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="gp-navmenu-foot" style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 28 }}>
+            <button onClick={() => setNavMenuOpen(false)} style={{ padding: "14px 28px", borderRadius: 999, border: "none", background: INK, color: BG, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Kapat</button>
+            <span style={{ color: INK_DIM, fontSize: 13 }}>{doneAll}/{totalAll} bugün tamamlandı</span>
+          </div>
+        </div>
+      </div>
+
+      {/* quick actions overlay + sheet */}
+      <div onClick={() => setSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 30, opacity: sheetOpen ? 1 : 0, pointerEvents: sheetOpen ? "auto" : "none", transition: "opacity .3s" }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 31, maxWidth: 440, margin: "0 auto", background: SURFACE, borderRadius: "22px 22px 0 0", padding: "14px 20px 28px", transform: sheetOpen ? "translateY(0)" : "translateY(100%)", transition: "transform .35s cubic-bezier(.4,0,.2,1)" }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(244,242,237,0.2)", margin: "0 auto 18px" }} />
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Hızlı işlemler</div>
+        <div style={{ fontSize: 12.5, color: INK_DIM, marginBottom: 16 }}>Bir kategoriye hızlıca madde ekle</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "14px 8px" }}>
+          {CATS.map((c) => {
+            const Icon = c.Icon;
+            return (
+              <button key={c.key} className="qa-item" onClick={() => { setSheetOpen(false); setEditMode(c.key === "spor"); setActive(c.key); setTimeout(() => openLists(c.key !== "spor"), 250); }} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                <div className="qa-circ" style={{ width: 56, height: 56, borderRadius: 28, background: `${c.accent}22`, color: c.accent, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform .15s" }}>
+                  <Icon size={20} strokeWidth={1.7} />
+                </div>
+                <span style={{ fontSize: 11, color: INK_DIM, textAlign: "center", lineHeight: 1.25 }}>{c.label} ekle</span>
+              </button>
+            );
+          })}
+          <button className="qa-item" onClick={() => { resetToday(); setSheetOpen(false); }} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <div className="qa-circ" style={{ width: 56, height: 56, borderRadius: 28, background: "rgba(244,242,237,0.1)", color: INK, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform .15s" }}>
+              <RotateCcw size={20} strokeWidth={1.7} />
+            </div>
+            <span style={{ fontSize: 11, color: INK_DIM, textAlign: "center", lineHeight: 1.25 }}>Bugünü sıfırla</span>
+          </button>
+        </div>
+      </div>
+
+      {/* floating pill nav */}
+      <div style={{ position: "absolute", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", padding: "0 20px", zIndex: 20 }}>
+        <div ref={navBarRef} style={{ maxWidth: 400, width: "100%", position: "relative", display: "flex", alignItems: "center", gap: 4, background: "rgba(18,22,27,0.82)", backdropFilter: "blur(16px)", border: "1px solid rgba(244,242,237,0.1)", borderRadius: 30, padding: "8px 10px", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}>
+          <div style={{ position: "absolute", top: 8, bottom: 8, left: 10, width: hiStyle.width, borderRadius: 20, background: "rgba(244,242,237,0.1)", transform: `translateX(${hiStyle.x}px)`, transition: "transform .3s cubic-bezier(.4,0,.2,1), width .3s", zIndex: 0 }} />
+          {CATS.map((c) => {
+            const Icon = c.Icon;
+            const isActive = c.key === active;
+            return (
+              <button
+                key={c.key}
+                ref={(el) => (navBtnRefs.current[c.key] = el)}
+                className="gp-navbtn"
+                onClick={() => { setEditMode(false); setActive(c.key); }}
+                style={{ position: "relative", zIndex: 1, flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px", color: isActive ? c.accent : INK_DIM }}
+              >
+                <Icon size={18} strokeWidth={1.8} />
+                <span style={{ fontSize: 9.5, fontWeight: 600 }}>{c.label}</span>
+              </button>
+            );
+          })}
+          <button id="gp-addbtn" onClick={() => setSheetOpen(true)} aria-label="Hızlı işlemler" style={{ width: 40, height: 40, borderRadius: 20, border: "none", flexShrink: 0, background: cat.accent, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "background .3s", position: "relative", zIndex: 1 }}>
+            <Plus size={19} color={BG} strokeWidth={2.5} />
+          </button>
+        </div>
+      </div>
+
+      {/* SPOR — tam ekran hareket/dinlenme oynatıcı */}
+      {displayPlayer && (() => {
+        const dp = displayPlayer;
+        const session = sporSessions.find((s) => s.id === dp.sessionId);
+        const ex = session?.exercises[dp.index];
+        const nextEx = session?.exercises[dp.index + 1];
+        const total = session?.exercises.length || 0;
+        const accent = CATMAP.spor.accent;
+        const isRunningTimer = dp.phase !== "done" && dp.running && dp.secondsLeft != null;
+        return (
+          <div className={"gp-player-panel" + (playerClosing ? " closing" : "")} style={{ position: "absolute", inset: 0, zIndex: 60, background: BG, display: "flex", flexDirection: "column", maxWidth: 440, margin: "0 auto" }}>
+            <div style={{ position: "absolute", inset: 0, zIndex: 0, background: `radial-gradient(circle at 50% 20%, ${accent} 0%, transparent 55%)`, opacity: dp.phase === "rest" ? 0.1 : 0.18, transition: "opacity .5s ease" }} />
+            <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%", padding: "calc(22px + env(safe-area-inset-top)) 24px 34px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <button onClick={closePlayer} aria-label="Kapat" style={{ width: 34, height: 34, borderRadius: 17, border: "1px solid rgba(244,242,237,0.25)", background: "transparent", color: INK, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "transform .15s" }}>
+                  <X size={16} />
+                </button>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, color: INK_DIM }}>{session?.name?.toUpperCase()}</div>
+                <div style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono',monospace", fontFeatureSettings: "'zero' 0", color: INK_DIM, width: 34, textAlign: "right" }}>
+                  {dp.phase === "done" ? `${total}/${total}` : `${dp.index + 1}/${total}`}
+                </div>
+              </div>
+
+              {/* ilerleme noktaları */}
+              <div style={{ display: "flex", gap: 6, marginTop: 18 }}>
+                {session?.exercises.map((e, i) => {
+                  const isCurrent = i === dp.index && dp.phase !== "done";
+                  return (
+                    <div
+                      key={e.id}
+                      className={"gp-progress-dot" + (isCurrent ? " current" : "")}
+                      style={{ flex: 1, height: 4, borderRadius: 2, background: i < dp.index || dp.phase === "done" ? accent : isCurrent ? "rgba(244,242,237,0.4)" : "rgba(244,242,237,0.14)" }}
+                    />
+                  );
+                })}
+              </div>
+
+              <div key={dp.phase + "-" + dp.index} className="gp-phase-content" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+                {dp.phase === "done" ? (
+                  <>
+                    <CheckCircle2 size={56} color={accent} strokeWidth={1.5} style={{ animation: "ppPop .4s cubic-bezier(.34,1.56,.64,1) both" }} />
+                    <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 300, fontSize: 34, margin: "18px 0 6px" }}>Seans tamamlandı</div>
+                    <div style={{ fontSize: 14, color: INK_DIM, marginBottom: 30 }}>{session?.name} bitti — harika iş.</div>
+                    <button onClick={closePlayer} style={{ padding: "13px 32px", borderRadius: 26, border: "none", background: accent, color: BG, fontSize: 14.5, fontWeight: 700, cursor: "pointer", transition: "transform .15s" }}>Kapat</button>
+                  </>
+                ) : dp.phase === "rest" ? (
+                  <>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 3, color: INK_DIM, textTransform: "uppercase", marginBottom: 10 }}>Dinlenme</div>
+                    <div className={"gp-timer-ring" + (isRunningTimer ? " running" : "")} style={{ fontFamily: "'Fraunces',serif", fontWeight: 300, fontSize: 76, lineHeight: 1 }}>{formatDuration(dp.secondsLeft)}</div>
+                    {nextEx && <div style={{ fontSize: 14, color: INK_DIM, marginTop: 22 }}>Sırada: <span style={{ color: INK }}>{nextEx.text}</span></div>}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 3, color: accent, textTransform: "uppercase", marginBottom: 10 }}>Hareket {dp.index + 1}</div>
+                    {ex?.mediaUrl && (
+                      ex.mediaType === "video" ? (
+                        <video src={ex.mediaUrl} controls playsInline style={{ width: "100%", maxWidth: 260, maxHeight: 150, borderRadius: 16, marginBottom: 14, background: "#000" }} />
+                      ) : (
+                        <img src={ex.mediaUrl} alt="" style={{ width: "100%", maxWidth: 260, maxHeight: 150, borderRadius: 16, marginBottom: 14, objectFit: "cover" }} />
+                      )
+                    )}
+                    <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 400, fontSize: 32, lineHeight: 1.15, marginBottom: 18, maxWidth: 300 }}>{ex?.text}</div>
+                    {ex?.mode === "time" ? (
+                      <div className={"gp-timer-ring" + (isRunningTimer ? " running" : "")} style={{ fontFamily: "'Fraunces',serif", fontWeight: 300, fontSize: 76, lineHeight: 1 }}>{formatDuration(dp.secondsLeft)}</div>
+                    ) : (
+                      <div style={{ fontSize: 22, color: INK_DIM, fontWeight: 500 }}>{ex?.repsLabel}</div>
+                    )}
+                    {nextEx && <div style={{ fontSize: 13.5, color: INK_FAINT, marginTop: 22 }}>Sırada: {nextEx.text}</div>}
+                  </>
+                )}
+              </div>
+
+              {/* kontroller */}
+              {dp.phase !== "done" && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
+                  {dp.phase === "exercise" && ex?.mode === "reps" ? (
+                    <>
+                      <button onClick={skipCurrent} style={{ padding: "14px 20px", borderRadius: 26, border: "1px solid rgba(244,242,237,0.25)", background: "transparent", color: INK_DIM, fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "transform .15s" }}>Atla</button>
+                      <button onClick={completeCurrentExercise} style={{ flex: 1, padding: "16px 0", borderRadius: 28, border: "none", background: accent, color: BG, fontSize: 15.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "transform .15s" }}>
+                        <Check size={17} strokeWidth={3} /> Tamamladım
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={skipCurrent} aria-label="Atla" style={{ width: 52, height: 52, borderRadius: 26, border: "1px solid rgba(244,242,237,0.25)", background: "transparent", color: INK_DIM, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "transform .15s" }}>
+                        <SkipForward size={20} />
+                      </button>
+                      <button onClick={togglePause} className="gp-playpause-btn" aria-label={dp.running ? "Duraklat" : "Devam"} style={{ width: 72, height: 72, borderRadius: 36, border: "none", background: accent, color: BG, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                        <span key={dp.running ? "pause" : "play"} className="gp-playpause-icon" style={{ display: "flex" }}>
+                          {dp.running ? <Pause size={26} fill={BG} /> : <Play size={26} fill={BG} />}
+                        </span>
+                      </button>
+                      <div style={{ width: 52 }} />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+      </div>
+    </div>
+  );
+}
+
+const rootEl = document.getElementById("root");
+ReactDOM.createRoot(rootEl).render(<GunlukPlanlayiciReact />);
+
+</script>
+</body>
+</html>
